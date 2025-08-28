@@ -5,9 +5,14 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>مشاركة موقعي</title>
 
-  <!-- CSP بسيطة (لا سكربتات خارجية) -->
+  <!-- CSP بسيطة -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'">
+        content="default-src 'self';
+                 img-src * data:;
+                 script-src 'self' https://cdn.jsdelivr.net;
+                 connect-src 'self' https://*.supabase.co https://api.ipify.org;
+                 style-src 'self' 'unsafe-inline';
+                 frame-ancestors 'none'">
 
   <style>
     :root{color-scheme:light dark}
@@ -24,7 +29,7 @@
 <body>
   <div class="card">
     <h1 id="title">📍 تحديد موقعك…</h1>
-    <p id="desc" class="muted">سنطلب من المتصفح موقعك بدقّة عالية عبر GPS.</p>
+    <p id="desc" class="muted">سنطلب من المتصفح موقعك بدقّة عالية عبر GPS ونحفظه.</p>
 
     <progress id="bar" max="100" value="15"></progress>
     <p id="status" class="muted">جارِ طلب الإذن…</p>
@@ -41,21 +46,25 @@
     <button id="retry2" class="hidden">إعادة المحاولة</button>
   </div>
 
+  <!-- supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // ==== تخصيص نصوص + تحويل اختياري من رابط ====
+    // ===== Supabase =====
+    const PROJECT_URL = 'https://weaiftikalbujuecfuhf.supabase.co';
+    const ANON_KEY    = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlYWlmdGlrYWxidWp1ZWNmdWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzOTU2MzAsImV4cCI6MjA3MTk3MTYzMH0.kxiytsgnkEOim_zUD49zgVp7rxr3nHAVHFb0Jq9dijk';
+    const TABLE       = 'pings';
+    const supabase = window.supabase.createClient(PROJECT_URL, ANON_KEY);
+
+    // ===== عناصر الواجهة =====
     const qs = new URLSearchParams(location.search);
     const titleQP = qs.get('title')?.slice(0,80) || null;
     const descQP  = qs.get('desc')?.slice(0,160) || null;
     let redirect  = null;
-    (function(){
-      const raw = qs.get('redirect');
-      if (raw && raw.startsWith('/') && !raw.startsWith('//')) redirect = raw;
-    })();
+    (function(){ const raw = qs.get('redirect'); if (raw && raw.startsWith('/') && !raw.startsWith('//')) redirect = raw; })();
 
     if (titleQP) document.getElementById('title').textContent = titleQP;
     if (descQP)  document.getElementById('desc').textContent  = descQP;
 
-    // ==== عناصر ====
     const bar = document.getElementById('bar');
     const statusEl = document.getElementById('status');
     const infoBox = document.getElementById('info');
@@ -67,7 +76,7 @@
 
     function setStatus(t, cls){ statusEl.textContent = t; statusEl.className = cls || 'muted'; }
 
-    // ==== GPS فقط ====
+    // ===== GPS فقط =====
     function gpsGeo(timeoutMs = 20000){
       return new Promise((resolve,reject)=>{
         if (!('geolocation' in navigator)) return reject(new Error('المتصفح لا يدعم تحديد الموقع'));
@@ -80,6 +89,20 @@
       });
     }
 
+    async function getIP(){
+      try{
+        const r = await fetch('https://api.ipify.org?format=json', {cache:'no-store'});
+        if (!r.ok) throw 0;
+        const j = await r.json();
+        return j.ip || null;
+      }catch{ return null; }
+    }
+
+    async function save(row){
+      const { error } = await supabase.from(TABLE).insert([row]);
+      if (error) throw new Error(error.message);
+    }
+
     function showResult(c){
       const lat = c.latitude, lng = c.longitude, accuracy = c.accuracy ?? null;
       coordsEl.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
@@ -87,7 +110,7 @@
       gmapsEl.href = `https://maps.google.com/?q=${lat},${lng}`;
       infoBox.classList.remove('hidden');
       bar.value = 100;
-      setStatus('تم القياس بدقة GPS ✅','ok');
+      setStatus('تم القياس وحُفظت البيانات ✅','ok');
       if (redirect) setTimeout(()=>location.assign(redirect), 800);
     }
 
@@ -96,13 +119,31 @@
         infoBox.classList.add('hidden');
         retry2Btn.classList.add('hidden');
         bar.value = 20;
-        setStatus('جارِ طلب الإذن من المتصفح…');
-        const c = await gpsGeo(20000);
+        setStatus('جارِ طلب إذن GPS من المتصفح…');
+
+        const c = await gpsGeo(20000);      // ← GPS فقط (قد يطلب إذن)
+        bar.value = 60;
+        setStatus('جلب عنوان الـ IP…');
+        const ip = await getIP();
+
         bar.value = 80;
-        setStatus('تم الحصول على البيانات…');
+        setStatus('حفظ البيانات في Supabase…');
+        const ua = navigator.userAgent;
+
+        await save({
+          lat: c.latitude,
+          lng: c.longitude,
+          accuracy: c.accuracy ?? null,
+          ip,
+          ua,
+          note: null,             // يمكن تمريره لاحقًا من الرابط لو رغبت
+          device_info: ua,
+          speed: c.speed ?? null,
+          heading: c.heading ?? null
+        });
+
         showResult(c);
       }catch(e){
-        // رسائل مفهومة للمستخدم
         let msg = e && e.code != null ? e.code : e.message || 'فشل غير معروف';
         if (e.code === 1) msg = 'المستخدم رفض الإذن (User denied Geolocation)';
         else if (e.code === 2) msg = 'الموقع غير متاح مؤقتًا';
