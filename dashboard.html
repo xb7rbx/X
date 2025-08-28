@@ -1,99 +1,158 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>لوحة المواقع</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <style>
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI;background:#fafafa}
     header{padding:12px 16px;background:#fff;border-bottom:1px solid #eee}
-    #map{height:55vh}
+    .controls{display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:8px;margin-top:8px}
+    .controls input,.controls select,.controls button{padding:10px;border:1px solid #ddd;border-radius:8px;background:#fff}
+    #map{height:55vh;background:#e5e7eb}
     .wrap{padding:12px 16px}
     table{width:100%;border-collapse:collapse;background:#fff}
     th,td{padding:8px 10px;border-bottom:1px solid #eee;text-align:right;font-size:14px}
     th{background:#f5f5f5}
     .muted{color:#6b7280}
+    .badge{padding:2px 6px;border-radius:999px;background:#eef2ff}
+    .pill{padding:2px 6px;border-radius:6px;background:#f3f4f6}
   </style>
 </head>
 <body>
   <header>
-    <h2>لوحة المواقع (آخر 200)</h2>
-    <p class="muted">يتم التحميل من Supabase مباشرة.</p>
+    <h2>لوحة المواقع</h2>
+    <div class="controls">
+      <input id="q" placeholder="بحث (note أو IP)">
+      <input id="from" type="date" title="من تاريخ">
+      <input id="to"   type="date" title="إلى تاريخ">
+      <select id="limit">
+        <option value="100">آخر 100</option>
+        <option value="200" selected>آخر 200</option>
+        <option value="500">آخر 500</option>
+      </select>
+      <button id="reload">تحديث الآن</button>
+    </div>
+    <div class="muted" id="stats"></div>
   </header>
 
   <div id="map"></div>
+
   <div class="wrap">
     <table id="tbl">
       <thead>
         <tr>
-          <th>الوقت</th><th>الملاحظة</th><th>الموقع</th><th>الدقة (م)</th>
-          <th>IP</th><th>بطارية</th><th>سرعة</th><th>اتجاه</th>
+          <th>الوقت</th>
+          <th>الملاحظة</th>
+          <th>الإحداثيات</th>
+          <th>الدقة (م)</th>
+          <th>IP</th>
+          <th>الطريقة</th>
+          <th>سرعة</th>
+          <th>اتجاه</th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
+    <p class="muted">تحدّث تلقائيًا كل 20 ثانية.</p>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    // قيم مشروعك
+    // مفاتيح مشروعك (مثل capture)
     const PROJECT_URL = 'https://weaiftikalbujuecfuhf.supabase.co';
     const ANON_KEY    = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlYWlmdGlrYWxidWp1ZWNmdWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzOTU2MzAsImV4cCI6MjA3MTk3MTYzMH0.kxiytsgnkEOim_zUD49zgVp7rxr3nHAVHFb0Jq9dijk';
     const supabase = window.supabase.createClient(PROJECT_URL, ANON_KEY);
 
-    // الخريطة
+    // خريطة
     const map = L.map('map');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19,
-      attribution: '&copy; OpenStreetMap'}).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+    map.setView([23.8859, 45.0792], 5); // مركز السعودية افتراضياً
+    let layerGroup = L.layerGroup().addTo(map);
 
-    function fmtTime(iso){
-      try { return new Date(iso).toLocaleString(); } catch { return iso; }
-    }
-    function gmapsLink(lat,lng){ return `https://maps.google.com/?q=${lat},${lng}`; }
-    function fmt(v,dec=6){ return (v===null||v===undefined)?'':Number(v).toFixed(dec); }
+    // عناصر
+    const el = id => document.getElementById(id);
+    const qEl = el('q'), fromEl = el('from'), toEl = el('to'), limitEl = el('limit'), statsEl = el('stats');
+
+    // قراءة فلاتر من الرابط (اختياري): ?q=...&from=2025-08-01&to=2025-08-31&limit=200
+    const urlQ = new URLSearchParams(location.search);
+    if (urlQ.get('q'))   qEl.value = urlQ.get('q');
+    if (urlQ.get('from')) fromEl.value = urlQ.get('from');
+    if (urlQ.get('to'))    toEl.value = urlQ.get('to');
+    if (urlQ.get('limit')) limitEl.value = urlQ.get('limit');
+
+    function gmaps(lat,lng){ return `https://maps.google.com/?q=${lat},${lng}`; }
+    function fmtTime(iso){ try { return new Date(iso).toLocaleString(); } catch { return iso; } }
+    function fmt(v,dec=6){ return (v==null)?'':Number(v).toFixed(dec); }
 
     async function load(){
-      const { data, error } = await supabase
-        .from('pings')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(200);
+      const limit = Number(limitEl.value) || 200;
+      let query = supabase.from('pings').select('*').order('created_at', {ascending:false}).limit(limit);
+
+      // فلاتر
+      const term = qEl.value?.trim();
+      if (term) {
+        // OR: note ILIKE أو ip ILIKE
+        query = query.or(`note.ilike.%${term}%,ip.ilike.%${term}%`);
+      }
+      const fromVal = fromEl.value ? new Date(fromEl.value).toISOString() : null;
+      const toVal   = toEl.value   ? new Date(new Date(toEl.value).getTime()+24*60*60*1000).toISOString() : null;
+      if (fromVal) query = query.gte('created_at', fromVal);
+      if (toVal)   query = query.lt('created_at', toVal);
+
+      const { data, error } = await query;
       if (error) { alert(error.message); return; }
 
+      // تحديث الخريطة
+      layerGroup.clearLayers();
       const markers = [];
-      const rows = data.map(r => {
+      data.forEach(r=>{
         if (r.lat && r.lng){
-          const m = L.marker([r.lat, r.lng]).addTo(map)
-            .bindPopup(`${r.note ?? ''}<br>${fmtTime(r.created_at)}<br>${fmt(r.lat)}, ${fmt(r.lng)}`);
-          markers.push(m);
+          const m = L.marker([r.lat, r.lng]).bindPopup(
+            `${r.note??''}<br>${fmtTime(r.created_at)}<br>${fmt(r.lat)}, ${fmt(r.lng)}`
+          );
+          markers.push(m); layerGroup.addLayer(m);
         }
-        const batt = (r.battery_level!=null ? Math.round(r.battery_level*100)+'%' : '') +
-                     (r.battery_charging!=null ? (r.battery_charging?' ⚡':'') : '');
-        const spd = (r.speed!=null ? (r.speed+' m/s') : '');
-        const hdg = (r.heading!=null ? (Math.round(r.heading)+'°') : '');
+      });
+      if (markers.length){
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds().pad(0.2));
+      }
+
+      // الجدول
+      const rows = data.map(r=>{
+        const method = r.accuracy!=null && r.accuracy<=150 ? 'GPS' : 'IP/تقريبي';
+        const batt = (r.battery_level!=null? Math.round(r.battery_level*100)+'%':'' ) + (r.battery_charging? ' ⚡':'');
+        const spd = r.speed!=null ? (r.speed + ' m/s') : '';
+        const hdg = r.heading!=null ? (Math.round(r.heading)+'°') : '';
         return `<tr>
           <td>${fmtTime(r.created_at)}</td>
-          <td>${r.note ?? ''}</td>
-          <td><a href="${gmapsLink(r.lat,r.lng)}" target="_blank">${fmt(r.lat)}, ${fmt(r.lng)}</a></td>
+          <td>${r.note ? `<span class="pill">${r.note}</span>` : ''}</td>
+          <td><a href="${gmaps(r.lat,r.lng)}" target="_blank">${fmt(r.lat)}, ${fmt(r.lng)}</a></td>
           <td>${r.accuracy ?? ''}</td>
           <td>${r.ip ?? ''}</td>
-          <td>${batt}</td>
+          <td><span class="badge">${method}</span></td>
           <td>${spd}</td>
           <td>${hdg}</td>
         </tr>`;
       });
-
       document.querySelector('#tbl tbody').innerHTML = rows.join('');
-
-      if (markers.length){
-        const group = L.featureGroup(markers);
-        map.fitBounds(group.getBounds().pad(0.2));
-      } else {
-        map.setView([23.8859, 45.0792], 5); // السعودية افتراضيًا
-      }
+      statsEl.textContent = `العناصر: ${data.length}`;
     }
+
+    // أزرار وتحديث تلقائي
+    el('reload').addEventListener('click', load);
+    [qEl, fromEl, toEl, limitEl].forEach(x=>x.addEventListener('change', load));
+    setInterval(load, 20000); // 20 ثانية
     load();
   </script>
 </body>
